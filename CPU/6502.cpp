@@ -203,3 +203,377 @@ void cpu6502::SetFlag(FLAGS6502 f, bool v)
 	else
 		status &= ~f;
 }
+
+// ADDRESSING MODES
+
+// Instructions like RTS or CLC have no address operand, the destination of results are implied.
+// There is no additional data required for this instruction.
+uint8_t cpu6502::IMP() {
+    fetched = a;
+    return 0;
+}
+
+// Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
+void cpu6502::IMM() {
+    addr_abs = pc++;
+    // The instruction expects the next byte to be used as a value, so we'll prep
+    // the read address to point to the next byte
+}
+
+// Fetches the value from an 8-bit address on the zero page.
+// Address Mode: Zero Page
+// To save program bytes, zero page addressing allows you to absolutely address
+// a location in first 0xFF bytes of address range. Clearly this only requires
+// one byte instead of the usual two.
+void cpu6502::ZP0() {
+    addr_abs = read(pc);
+    pc++;
+    addr_abs &= 0x00FF;
+}
+
+// Zero Page with X offset
+void cpu6502::ZPX() {
+    addr_abs = read(pc) + x;
+    pc++;
+    addr_abs &= 0x00FF;
+}
+
+// Zero Page with Y offset
+void cpu6502::ZPY() {
+    addr_abs = read(pc) + y;
+    pc++;
+    addr_abs &= 0x00FF;
+}
+
+// Address Mode: Relative
+// This address mode is exclusive to branch instructions. The address
+// must reside within -128 to +127 of the branch instruction, i.e.
+// you cant directly branch to any address in the addressable range.
+void cpu6502::REL() {
+    addr_rel = read(pc);
+    pc++;
+    if (addr_rel & 0x80) {
+        addr_rel |= 0xFF00;
+    }
+}
+
+// Fetches the value from a 16-bit address anywhere in memory.
+void cpu6502::ABS() {
+    uint16_t low = read(pc);
+    pc++;
+    uint16_t high = read(pc);
+    pc++;
+
+    addr_abs = (high << 8) | low;
+}
+
+// Address Mode: Absolute with X Offset
+// Fundamentally the same as absolute addressing, but the contents of the X Register
+// is added to the supplied two byte address. If the resulting address changes
+// the page, an additional clock cycle is required
+bool cpu6502::ABX() {
+    uint16_t low = read(pc);
+    pc++;
+    uint16_t high = read(pc);
+    pc++;
+
+    addr_abs = (high << 8) | low;
+    addr_abs += x;
+
+    if ((addr_abs & 0xFF00) != (high << 8))
+        return true;
+    else return false;
+}
+
+// Address Mode: Absolute with Y Offset
+// Fundamentally the same as absolute addressing, but the contents of the Y Register
+// is added to the supplied two byte address. If the resulting address changes
+// the page, an additional clock cycle is required
+bool cpu6502::ABY() {
+    uint16_t low = read(pc);
+    pc++;
+    uint16_t high = read(pc);
+    pc++;
+
+    addr_abs = (high << 8) | low;
+    addr_abs += y;
+
+    if ((addr_abs & 0xFF00) != (high << 8))
+        return true;
+    else return false;
+}
+
+// Address Mode: Indirect
+// The supplied 16-bit address is read to get the actual 16-bit address. This is
+// instruction is unusual in that it has a bug in the hardware! To emulate its
+// function accurately, we also need to emulate this bug. If the low byte of the
+// supplied address is 0xFF, then to read the high byte of the actual address
+// we need to cross a page boundary. This doesnt actually work on the chip as
+// designed, instead it wraps back around in the same page, yielding an
+// invalid actual address
+void cpu6502::IND() {
+    uint16_t ptr_lo = read(pc);
+	pc++;
+	uint16_t ptr_hi = read(pc);
+	pc++;
+
+	uint16_t ptr = (ptr_hi << 8) | ptr_lo;
+
+	if (ptr_lo == 0x00FF) // Simulate page boundary hardware bug
+	{
+		addr_abs = (read(ptr & 0xFF00) << 8) | read(ptr + 0);
+	}
+	else // Behave normally
+	{
+		addr_abs = (read(ptr + 1) << 8) | read(ptr + 0);
+	}
+}
+
+// Address Mode: Indirect X
+// The supplied 8-bit address is offset by X Register to index
+// a location in page 0x00. The actual 16-bit address is read
+// from this location
+void cpu6502::IZX() {
+    uint16_t t = read(pc);
+	pc++;
+
+	uint16_t lo = read((uint16_t)(t + (uint16_t)x) & 0x00FF);
+	uint16_t hi = read((uint16_t)(t + (uint16_t)x + 1) & 0x00FF);
+
+	addr_abs = (hi << 8) | lo;
+}
+
+// Address Mode: Indirect Y
+// The supplied 8-bit address indexes a location in page 0x00. From
+// here the actual 16-bit address is read, and the contents of
+// Y Register is added to it to offset it. If the offset causes a
+// change in page then an additional clock cycle is required.
+bool cpu6502::IZY() {
+    uint16_t t = read(pc);
+	pc++;
+
+	uint16_t lo = read(t & 0x00FF);
+	uint16_t hi = read((t + 1) & 0x00FF);
+
+	addr_abs = (hi << 8) | lo;
+	addr_abs += y;
+
+	if ((addr_abs & 0xFF00) != (hi << 8))
+		return true;
+	else
+		return false;
+}
+
+// This function sources the data used by the instruction into
+// a convenient numeric variable. Some instructions dont have to
+// fetch data as the source is implied by the instruction. For example
+// "INX" increments the X register. There is no additional data
+// required. For all other addressing modes, the data resides at
+// the location held within addr_abs, so it is read from there.
+// Immediate adress mode exploits this slightly, as that has
+// set addr_abs = pc + 1, so it fetches the data from the
+// next byte for example "LDA $FF" just loads the accumulator with
+// 256, i.e. no far reaching memory fetch is required. "fetched"
+// is a variable global to the CPU, and is set by calling this
+// function. It also returns it for convenience.
+uint8_t cpu6502::fetch()
+{
+	if (!(lookup[opcode].addrmode == &cpu6502::IMP))
+		fetched = read(addr_abs);
+	return fetched;
+}
+
+
+// OPCODES
+
+uint8_t cpu6502::ADC() {
+    // Grab the data that we are adding to the accumulator
+	fetch();
+
+	// Add is performed in 16-bit domain for emulation to capture any
+	// carry bit, which will exist in bit 8 of the 16-bit word
+	temp = (uint16_t)a + (uint16_t)fetched + (uint16_t)GetFlag(C);
+
+	// The carry flag out exists in the high byte bit 0
+	SetFlag(C, temp > 255);
+
+	// The Zero flag is set if the result is 0
+	SetFlag(Z, (temp & 0x00FF) == 0);
+
+	// The signed Overflow flag is set based on all that up there! :D
+	SetFlag(V, (~((uint16_t)a ^ (uint16_t)fetched) & ((uint16_t)a ^ (uint16_t)temp)) & 0x0080);
+
+	// The negative flag is set to the most significant bit of the result
+	SetFlag(N, temp & 0x80);
+
+	// Load the result into the accumulator (it's 8-bit dont forget!)
+	a = temp & 0x00FF;
+
+	// This instruction has the potential to require an additional clock cycle
+	return 1;
+}
+uint8_t cpu6502::AND() {
+    return 0;
+}
+uint8_t cpu6502::ASL() {
+    return 0;
+}
+uint8_t cpu6502::BCC() {
+    return 0;
+}
+uint8_t cpu6502::BCS() {
+    return 0;
+}
+uint8_t cpu6502::BEQ() {
+    return 0;
+}
+uint8_t cpu6502::BIT() {
+    return 0;
+}
+uint8_t cpu6502::BMI() {
+    return 0;
+}
+uint8_t cpu6502::BNE() {
+    return 0;
+}
+uint8_t cpu6502::BPL() {
+    return 0;
+}
+uint8_t cpu6502::BRK() {
+    return 0;
+}
+uint8_t cpu6502::BVC() {
+    return 0;
+}
+uint8_t cpu6502::BVS() {
+    return 0;
+}
+uint8_t cpu6502::CLC() {
+    return 0;
+}
+uint8_t cpu6502::CLD() {
+    return 0;
+}
+uint8_t cpu6502::CLI() {
+    return 0;
+}
+uint8_t cpu6502::CLV() {
+    return 0;
+}
+uint8_t cpu6502::CMP() {
+    return 0;
+}
+uint8_t cpu6502::CPX() {
+    return 0;
+}
+uint8_t cpu6502::CPY() {
+    return 0;
+}
+uint8_t cpu6502::DEC() {
+    return 0;
+}
+uint8_t cpu6502::DEX() {
+    return 0;
+}
+uint8_t cpu6502::DEY() {
+    return 0;
+}
+uint8_t cpu6502::EOR() {
+    return 0;
+}
+uint8_t cpu6502::INC() {
+    return 0;
+}
+uint8_t cpu6502::INX() {
+    return 0;
+}
+uint8_t cpu6502::INY() {
+    return 0;
+}
+uint8_t cpu6502::JMP() {
+    return 0;
+}
+uint8_t cpu6502::JSR() {
+    return 0;
+}
+uint8_t cpu6502::LDA() {
+    return 0;
+}
+uint8_t cpu6502::LDX() {
+    return 0;
+}
+uint8_t cpu6502::LDY() {
+    return 0;
+}
+uint8_t cpu6502::LSR() {
+    return 0;
+}
+uint8_t cpu6502::NOP() {
+    return 0;
+}
+uint8_t cpu6502::ORA() {
+    return 0;
+}
+uint8_t cpu6502::PHA() {
+    return 0;
+}
+uint8_t cpu6502::PHP() {
+    return 0;
+}
+uint8_t cpu6502::PLA() {
+    return 0;
+}
+uint8_t cpu6502::PLP() {
+    return 0;
+}
+uint8_t cpu6502::ROL() {
+    return 0;
+}
+uint8_t cpu6502::ROR() {
+    return 0;
+}
+uint8_t cpu6502::RTI() {
+    return 0;
+}
+uint8_t cpu6502::RTS() {
+    return 0;
+}
+uint8_t cpu6502::SBC() {
+    return 0;
+}
+uint8_t cpu6502::SEC() {
+    return 0;
+}
+uint8_t cpu6502::SED() {
+    return 0;
+}
+uint8_t cpu6502::SEI() {
+    return 0;
+}
+uint8_t cpu6502::STA() {
+    return 0;
+}
+uint8_t cpu6502::STX() {
+    return 0;
+}
+uint8_t cpu6502::STY() {
+    return 0;
+}
+uint8_t cpu6502::TAX() {
+    return 0;
+}
+uint8_t cpu6502::TAY() {
+    return 0;
+}
+uint8_t cpu6502::TSX() {
+    return 0;
+}
+uint8_t cpu6502::TXA() {
+    return 0;
+}
+uint8_t cpu6502::TXS() {
+    return 0;
+}
+uint8_t cpu6502::TYA() {
+    return 0;
+}
