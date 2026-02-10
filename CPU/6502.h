@@ -54,6 +54,10 @@ class cpu6502 {
 
         uint8_t fetch(); // function to fetch instructions
 
+        void branch();
+        void stck_push(uint8_t data); // function to push stuff onto stack
+        uint8_t stck_pull(); // function to pull stuff from stack
+
         // used to access status register
         uint8_t GetFlag(FLAGS6502 f);
         void    SetFlag(FLAGS6502 f, bool v);
