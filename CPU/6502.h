@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <map>
 
 class Bus;
 
@@ -25,6 +26,8 @@ class cpu6502 {
 		void irq();		// Interrupt Request - Executes an instruction at a specific location
 		void nmi();		// Non-Maskable Interrupt Request - As above, but cannot be disabled
 		void clock();	// Perform one clock cycle's worth of update
+		bool complete(); // Returns true if the CPU has completed its current instruction
+		std::map<uint16_t, std::string> disassemble(uint16_t nStart, uint16_t nStop);
 
 		enum FLAGS6502 // the 8 flags stored in the status register
 			{
@@ -70,17 +73,17 @@ class cpu6502 {
     	// primed with the addresses it needs, and the number of clock
         // cycles the instruction requires is calculated.
         uint8_t IMP(); // Instructions like RTS or CLC have no address operand, the destination of results are implied.
-        void IMM(); // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
-        void ZP0(); // Fetches the value from an 8-bit address on the zero page.
-        void ZPX(); // Zero Page with X Offset
-        void ZPY(); // Zero Page with Y Offset
-        void REL(); // Branch instructions (e.g. BEQ, BCS) have a relative addressing mode that specifies an 8-bit signed offset relative to the current PC.
-        void ABS(); // Fetches the value from a 16-bit address anywhere in memory.
-        bool ABX(); // Absolute with X offset
-        bool ABY(); // Absolute with Y offset
-        void IND(); // The JMP instruction has a special indirect addressing mode that can jump to the address stored in a 16-bit pointer anywhere in memory.
-        void IZX(); // Indirect with X offset
-        bool IZY(); // Indirect with Y offset
+        uint8_t IMM(); // Uses the 8-bit operand itself as the value for the operation, rather than fetching a value from a memory address.
+        uint8_t ZP0(); // Fetches the value from an 8-bit address on the zero page.
+        uint8_t ZPX(); // Zero Page with X Offset
+        uint8_t ZPY(); // Zero Page with Y Offset
+        uint8_t REL(); // Branch instructions (e.g. BEQ, BCS) have a relative addressing mode that specifies an 8-bit signed offset relative to the current PC.
+        uint8_t ABS(); // Fetches the value from a 16-bit address anywhere in memory.
+        uint8_t ABX(); // Absolute with X offset
+        uint8_t ABY(); // Absolute with Y offset
+        uint8_t IND(); // The JMP instruction has a special indirect addressing mode that can jump to the address stored in a 16-bit pointer anywhere in memory.
+        uint8_t IZX(); // Indirect with X offset
+        uint8_t IZY(); // Indirect with Y offset
 
         // opcodes
         // to see details about each operation refer to the 6502.cpp file
